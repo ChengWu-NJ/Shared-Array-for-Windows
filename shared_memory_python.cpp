@@ -194,7 +194,25 @@ char * create_shared_memory(char * string_shm, int max_buffer_size) {
  */
 bool delete_shared_memory(char * string_shm) {
 #if defined(WIN)
-	return true;
+	HANDLE hMapFile = OpenFileMapping(
+		FILE_MAP_ALL_ACCESS,
+		FALSE,
+		string_shm); 
+	// no need delete
+	if (hMapFile == NULL) return true;
+
+    // locate the old one in shared memory
+	char * pBuf = (char *) MapViewOfFile(hMapFile,
+                        FILE_MAP_ALL_ACCESS,
+                        0,
+                        0,
+                        sizeof(size_t));
+	if (pBuf != nullptr) {
+		UnmapViewOfFile((LPCVOID) pBuf);
+	}
+
+	return CloseHandle(hMapFile);
+
 #elif defined(LINUX)
 	if (shm_unlink(string_shm) == 0) return true;
 #endif
@@ -296,7 +314,7 @@ create_mem_sh(PyObject *self, PyObject *args)
 	if (array_for_shrdmem->base != nullptr) {
 		PyErr_SetString(PyExc_RuntimeError, "set_mem_sh: array is not homogeneous");
 	}
-	/* Аrray size calculation */ 
+	/* §¡rray size calculation */ 
 	char * shBuf = create_shared_memory(string_shm, ARRAY_FULL_SIZE(array_for_shrdmem));
 	if (shBuf == nullptr) {
 		Py_INCREF(Py_None);
@@ -305,6 +323,37 @@ create_mem_sh(PyObject *self, PyObject *args)
 	/* Copy array struct from heap to shared memory */
 	*((size_t *) shBuf) = ARRAY_FULL_SIZE(array_for_shrdmem);
 	shBuf += sizeof(size_t);
+	copy_from_numpy_array_to_buffer(array_for_shrdmem, shBuf);
+	Py_INCREF(Py_True);
+	return Py_True;
+}
+
+static PyObject *
+update_mem_sh(PyObject *self, PyObject *args)
+{
+	PyObject * pyobj_for_shrdmem = nullptr;
+	char * string_shm;
+	if (!PyArg_ParseTuple(args, "sO", &string_shm, &pyobj_for_shrdmem)) {
+		PyErr_SetString(PyExc_RuntimeError, "update_mem_sh: parse except");
+	}
+
+    // prepare the new ndarray
+	PyArrayObject * array_for_shrdmem = (PyArrayObject *) pyobj_for_shrdmem;
+	array_for_shrdmem = PyArray_GETCONTIGUOUS(array_for_shrdmem);
+	if (array_for_shrdmem->base != nullptr) {
+		PyErr_SetString(PyExc_RuntimeError, "update_mem_sh: array is not homogeneous");
+	}
+
+    // locate the old one in shared memory
+	char * shBuf = attach_shared_memory(string_shm);
+	if (shBuf == nullptr) {
+		Py_INCREF(Py_None);
+		return Py_None;
+	}
+
+    // update
+    //*((size_t *) shBuf) = ARRAY_FULL_SIZE(array_for_shrdmem);
+	//shBuf += sizeof(size_t);
 	copy_from_numpy_array_to_buffer(array_for_shrdmem, shBuf);
 	Py_INCREF(Py_True);
 	return Py_True;
@@ -577,6 +626,8 @@ static PyMethodDef WinSharedArrayMethods[] = {
 
     {"create_mem_sh",  create_mem_sh, METH_VARARGS,
      "method for create shared memory named."},
+    {"update_mem_sh",  update_mem_sh, METH_VARARGS,
+     "method for update shared memory named."},
     {"attach_mem_sh",  attach_mem_sh, METH_VARARGS,
      "method for get shared memory named."},
     {"delete_mem_sh",  delete_mem_sh, METH_VARARGS,
