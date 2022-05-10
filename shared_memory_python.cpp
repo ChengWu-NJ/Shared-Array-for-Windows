@@ -136,6 +136,41 @@ PyArrayObject * copy_from_buffer_to_numpy_array(char * buffer) {
 }
 
 
+// update ndarray directly without accessing the mapview of shared memory file handler
+void copy_from_ndarray_to_ndarray(PyArrayObject * dst_array, PyArrayObject * src_array) {
+    std::size_t size_src = size_data_array(src_array);
+    std::size_t size_dst = size_data_array(dst_array);
+    if (size_src != size_dst) {
+        PyErr_SetString(PyExc_RuntimeError, "copy_from_ndarray_to_ndarray: different sizes");
+    }
+
+    std::memcpy((char *) dst_array->data , (char *) src_array->data, size_src);
+}
+
+// update ndarray directly without accessing the mapview of shared memory file handler
+static PyObject *
+update_ndarray_sh(PyObject *self, PyObject *args)
+{
+	PyObject * pyobj_dst = nullptr;
+	PyObject * pyobj_src = nullptr;
+	if (!PyArg_ParseTuple(args, "OO", &pyobj_dst, &pyobj_src)) {
+		PyErr_SetString(PyExc_RuntimeError, "update_ndarray_sh: parse except");
+	}
+
+    // mode to ndarray
+	PyArrayObject * dst_array = (PyArrayObject *) pyobj_dst;
+	PyArrayObject * src_array = (PyArrayObject *) pyobj_src;
+	src_array = PyArray_GETCONTIGUOUS(src_array);
+	if (src_array->base != nullptr) {
+		PyErr_SetString(PyExc_RuntimeError, "update_ndarray_sh: src array is not homogeneous");
+	}
+
+	copy_from_ndarray_to_ndarray(dst_array, src_array);
+	Py_INCREF(Py_True);
+	return Py_True;
+}
+
+
 /*
  * Create a buffer in shared memory
  */
@@ -616,11 +651,6 @@ get_last_error(PyObject *self, PyObject *args) {
 	return py_err;
 }
 
-// static PyObject *
-// test_function(PyObject *self, PyObject *args) {
-// 	int fd = shm_open("/test_sh_m", O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-// 	return Py_None;
-// }
 
 static PyMethodDef WinSharedArrayMethods[] = {
 
@@ -628,6 +658,8 @@ static PyMethodDef WinSharedArrayMethods[] = {
      "method for create shared memory named."},
     {"update_mem_sh",  update_mem_sh, METH_VARARGS,
      "method for update shared memory named."},
+    {"update_ndarray_sh",  update_ndarray_sh, METH_VARARGS,
+     "method for update ndarray directly."},
     {"attach_mem_sh",  attach_mem_sh, METH_VARARGS,
      "method for get shared memory named."},
     {"delete_mem_sh",  delete_mem_sh, METH_VARARGS,
